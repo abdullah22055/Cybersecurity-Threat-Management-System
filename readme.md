@@ -1,6 +1,7 @@
 This project is a Threat Management System that allows users to log in, track cyber threats, manage affected systems, and monitor action statuses based on roles. It is built using Python, Tkinter for the GUI,  and an SQL Server database for data storage.
 
 FEATURES:
+Secure python code that has no sqli vulnerability
 User Authentication: Secure login with role-based access control.
 Threat Tracking: Add, delete, and manage cyber threats.
 Affected Systems Management: Store and retrieve affected system information.
