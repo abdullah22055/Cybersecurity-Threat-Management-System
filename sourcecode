@@ -1,0 +1,374 @@
+import pypyodbc as odbc
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+import datetime
+from flask import Flask, request, render_template_string
+app = Flask(__name__)
+
+DRIVER_NAME = 'SQL SERVER'
+SERVER_NAME = 'DESKTOP-9TK7R94\\SQLEXPRESS'
+DATABASE_NAME = 'db_project'
+
+connection_string = f"""
+DRIVER={{{DRIVER_NAME}}};
+SERVER={SERVER_NAME};
+DATABASE={DATABASE_NAME};
+Trust_Connection=yes;
+"""
+def login():
+    username = username_entry.get()
+    password = password_entry.get()
+
+    try:
+
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+
+        query = """
+        SELECT name, role_name, permissions
+        FROM Users 
+        JOIN Roles  ON Users.role_id = Roles.role_id
+        WHERE Users.name = ? AND Users.password = ?
+        """
+        cursor.execute(query, (username, password))
+        result = cursor.fetchone()
+
+        if result:
+            name, role, permissions = result
+            messagebox.showinfo("Login Successful",f"Welcome, {name}!\nRole: {role.capitalize()}")
+            login_window.destroy()
+            dashboard(role)
+        else:
+            messagebox.showerror("Error", "Invalid Username or Password")
+
+
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        messagebox.showerror("Database Error", str(e))
+def addaffectedsystem():
+
+    threat_id = simpledialog.askstring("Input", "Enter Threat ID:")
+    attack_name = simpledialog.askstring("Input", "Enter Attack Name:")
+    severity = simpledialog.askstring("Input", "Enter Severity:")
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d")
+    system_name = simpledialog.askstring("Input", "Enter System Name:")
+    system_id = simpledialog.askstring("Input", "Enter System id:")
+    ip_address = simpledialog.askstring("Input", "Enter IP Address:")
+
+    try:
+
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        threatquery = """
+        INSERT INTO Threats (threat_id, attack_name, severity, timestamp)
+        VALUES (?, ?, ?, ?);
+        """
+        cursor.execute(threatquery, (threat_id, attack_name, severity, timestamp))
+
+        sysquery = """
+        INSERT INTO Systems (system_id, system_name, ip_address)
+        VALUES (?, ?, ?);
+        """
+        cursor.execute(sysquery, (system_id, system_name, ip_address))
+        conn.commit()
+
+        system_id_query = "SELECT system_id FROM Systems WHERE ip_address = ?"
+        cursor.execute(system_id_query, (ip_address,))
+        system_id = cursor.fetchone()[0]
+        affsysquery = """
+        INSERT INTO AffectedSystems (threat_id, system_id)
+        VALUES (?, ?);
+        """
+        cursor.execute(affsysquery, (threat_id, system_id))
+
+        conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        messagebox.showinfo("Success", "New affected system has been added successfully!")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Error adding affected system: {str(e)}")
+
+
+def delaffectedsystem():
+    # Prompt the user to input the system_id to delete
+    system_id = simpledialog.askstring("Input", "Enter System ID to delete:")
+
+    if not system_id:
+        messagebox.showerror("Error", "System ID is required!")
+        return
+
+    try:
+        # Establish database connection
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        # Check if the system exists
+        check_query = "SELECT * FROM Systems WHERE system_id = ?"
+        cursor.execute(check_query, (system_id,))
+        system = cursor.fetchone()
+
+        if not system:
+            messagebox.showerror("Error", "No system found with the provided ID.")
+            cursor.close()
+            conn.close()
+            return
+
+        # Delete related threat details from AffectedSystems
+        delete_affsys_query = "DELETE FROM AffectedSystems WHERE system_id = ?"
+        cursor.execute(delete_affsys_query, (system_id,))
+
+        # Delete the system from Systems table
+        delete_sys_query = "DELETE FROM Systems WHERE system_id = ?"
+        cursor.execute(delete_sys_query, (system_id,))
+
+        # Commit the changes
+        conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        messagebox.showinfo("Success", "System and related threat details deleted successfully!")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Error deleting system: {str(e)}")
+
+
+def affsystems():
+    try:
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        query = """
+        SELECT T.threat_id, T.attack_name, T.severity, T.timestamp, S.system_name, S.ip_address
+        FROM Threats T
+        JOIN AffectedSystems A ON T.threat_id = A.threat_id
+        JOIN Systems S ON A.system_id = S.system_id;
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        affected_window = tk.Toplevel()
+        affected_window.title("Affected Systems")
+
+        # Create a frame for scrollable content
+        frame = tk.Frame(affected_window)
+        frame.pack(fill="both", expand=True)
+
+        # Create a canvas and scrollbar
+        canvas = tk.Canvas(frame)
+        scrollbar = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        # Configure scrolling
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Add headers
+        headers = ["Threat ID", "Attack Name", "Severity", "Timestamp", "System Name", "IP Address"]
+        for col_num, header_text in enumerate(headers):
+            header = tk.Label(scrollable_frame, text=header_text, font=("Arial", 12, "bold"), padx=5, pady=5, anchor="w")
+            header.grid(row=0, column=col_num, sticky="w")
+
+        # Add rows
+        for row_num, result in enumerate(results, start=1):
+            for col_num, value in enumerate(result):
+                cell = tk.Label(scrollable_frame, text=value, font=("Arial", 10), padx=5, pady=5, anchor="w")
+                cell.grid(row=row_num, column=col_num, sticky="w")
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Error fetching data: {str(e)}")
+
+def trackactions():
+    try:
+
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        query = """
+        SELECT T.threat_id, T.attack_name,A.action_name, A.status, A.action_timestamp
+        FROM Threats T
+        JOIN ThreatActions TA ON T.threat_id = TA.threat_id
+        JOIN Actions A ON TA.action_id = A.action_id;"""
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        affected_window = tk.Toplevel()
+        affected_window.title("Action Tracking")
+
+        headers = ["Threat ID", "Attack Name", "Action Name", "Status", "TimeStamp"]
+        row_num = 0
+
+        for col_num in range(len(headers)):
+            header = tk.Label(affected_window, text=headers[col_num], font=("Arial", 12, "bold"), padx=5, pady=5, anchor="w")
+            header.grid(row=row_num, column=col_num, sticky="w")
+
+        for result in results:
+            row_num += 1
+            for col_num, value in enumerate(result):
+                cell = tk.Label(affected_window, text=value, font=("Arial", 10), padx=5, pady=5, anchor="w")
+                cell.grid(row=row_num, column=col_num, sticky="w")
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Error fetching data: {str(e)}")
+def pendingactions():
+    try:
+
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        query = """
+        SELECT T.threat_id, T.attack_name, S.system_name, A.action_name, A.status
+        FROM Threats T
+        JOIN AffectedSystems AS AF ON T.threat_id = AF.threat_id
+        JOIN Systems AS S ON AF.system_id = S.system_id
+        JOIN ThreatActions TA ON T.threat_id = TA.threat_id
+        JOIN Actions A ON TA.action_id = A.action_id
+        WHERE A.status = 'pending'; """
+
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        affected_window = tk.Toplevel()
+        affected_window.title("Pending Actions")
+
+        headers = ["Threat ID", "Attack Name", "System Name", "Action Name", "Status"]
+        row_num = 0
+
+        for col_num in range(len(headers)):
+            header = tk.Label(affected_window, text=headers[col_num], font=("Arial", 12, "bold"), padx=5, pady=5, anchor="w")
+            header.grid(row=row_num, column=col_num, sticky="w")
+
+        for result in results:
+            row_num += 1
+            for col_num, value in enumerate(result):
+                cell = tk.Label(affected_window, text=value, font=("Arial", 10), padx=5, pady=5, anchor="w")
+                cell.grid(row=row_num, column=col_num, sticky="w")
+
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Error fetching data: {str(e)}")
+def viewonly():
+    try:
+        conn = odbc.connect(connection_string)
+        cursor = conn.cursor()
+
+        query = """
+        Select * from ThreatDetails
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+
+        affected_window = tk.Toplevel()
+        affected_window.title("Affected Systems")
+
+        # Create a frame for scrollable content
+        frame = tk.Frame(affected_window)
+        frame.pack(fill="both", expand=True)
+
+        # Create a canvas and scrollbar
+        canvas = tk.Canvas(frame)
+        scrollbar = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+
+        # Configure scrolling
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Add headers
+        headers = ["Threat ID", "Attack Name", "Severity", "Timestamp", "System Name", "IP Address"]
+        for col_num, header_text in enumerate(headers):
+            header = tk.Label(scrollable_frame, text=header_text, font=("Arial", 12, "bold"), padx=5, pady=5, anchor="w")
+            header.grid(row=0, column=col_num, sticky="w")
+
+        # Add rows
+        for row_num, result in enumerate(results, start=1):
+            for col_num, value in enumerate(result):
+                cell = tk.Label(scrollable_frame, text=value, font=("Arial", 10), padx=5, pady=5, anchor="w")
+                cell.grid(row=row_num, column=col_num, sticky="w")
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Error fetching data: {str(e)}")
+
+
+def dashboard(role):
+    dashboard = tk.Tk()
+    dashboard.title("Threat Intelligence System")
+
+    tk.Label(dashboard, text=f"Welcome, {role.capitalize()}!", font=("Arial", 20)).pack(pady=10)
+
+    if role.lower() == "admin":
+        (tk.Button(dashboard, text="Affected Systems", bg="green", fg="white", font=("Arial", 14), command=affsystems)
+         .pack(pady=5))
+        (tk.Button(dashboard, text="Add Affected System", bg="green", fg="white", font=("Arial", 14), command=addaffectedsystem)
+         .pack(pady=5))
+        (tk.Button(dashboard, text="Delete Affected System", bg="green", fg="white", font=("Arial", 14), command=delaffectedsystem)
+         .pack(pady=5))
+        (tk.Button(dashboard, text="Track Actions", bg="green", fg="white", font=("Arial", 14), command=trackactions)
+         .pack(pady=5))
+        (tk.Button(dashboard, text="Pending Actions", bg="green", fg="white", font=("Arial", 14), command=pendingactions)
+         .pack(pady=5))
+
+    elif role.lower() == "analyst":
+        (tk.Button(dashboard, text="Track Actions", bg="green", fg="white", font=("Arial", 14), command=trackactions)
+         .pack(pady=5))
+        (tk.Button(dashboard, text="Affected Systems", bg="green", fg="white", font=("Arial", 14), command=affsystems)
+         .pack(pady=5))
+
+    # Viewer Role: View Only
+    elif role.lower() == "viewer":
+        (tk.Button(dashboard, text="Affected Systems", bg="green", fg="white", font=("Arial", 14), command=viewonly)
+         .pack(pady=5))
+
+    dashboard.mainloop()
+
+
+login_window = tk.Tk()
+login_window.title("Threat Intelligence System")
+
+# UI Components
+tk.Label(login_window, text="Login", font=("Arial", 24, "bold")).pack(pady=10)
+
+tk.Label(login_window, text="Username:", font=("Arial", 14)).pack()
+username_entry = tk.Entry(login_window, font=("Arial", 14))
+username_entry.pack(pady=5)
+
+tk.Label(login_window, text="Password:", font=("Arial", 14)).pack()
+password_entry = tk.Entry(login_window, font=("Arial", 14), show="*")
+password_entry.pack(pady=5)
+
+login_button = tk.Button(login_window, text="Login", font=("Arial", 14), bg="blue", fg="white", command=login)
+login_button.pack(pady=10)
+
+login_window.mainloop()
